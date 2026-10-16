@@ -105,7 +105,21 @@
     .icon-btn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;border-radius:2px;transition:all 0.15s;font-size:13px;}
     .icon-btn:hover{border-color:var(--accent);color:var(--accent);}
     .heart-btn.active{border-color:var(--red);color:var(--red);background:rgba(255,59,92,0.1);}
-    @media(max-width:480px){td,th{padding:8px 8px;}.ticker-name{max-width:100px;}.ticker-type{display:none;}}
+    @media(max-width:480px){td,th{padding:8px 8px;}.ticker-name{max-width:100px;}.ticker-type{display:none;}th:nth-child(5),td:nth-child(5){display:none;}}
+    @media(max-width:600px){th:nth-child(4),td:nth-child(4){display:none;}}
+
+    /* DIVIDEND COLUMNS */
+    .yield-cell{font-family:var(--mono);font-size:12px;}
+    .yield-val{color:var(--green);font-weight:700;}
+    .yield-none{color:var(--muted);}
+    .streak-cell{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;}
+    .streak-up::before{content:'▲ ';color:var(--green);}
+    .streak-down::before{content:'▼ ';color:var(--red);}
+    .streak-flat::before{content:'▬ ';color:var(--muted);}
+    .streak-new::before{content:'● ';color:var(--gold);}
+    .div-toggle{font-family:var(--mono);font-size:11px;letter-spacing:1px;padding:9px 12px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;border-radius:2px;transition:all 0.15s;white-space:nowrap;align-self:flex-end;}
+    .div-toggle:hover{border-color:var(--gold);color:var(--gold);}
+    .div-toggle.active{background:rgba(240,192,64,0.1);border-color:var(--gold);color:var(--gold);}
 
     /* WATCHLIST */
     .watchlist-panel{background:var(--surface);display:flex;flex-direction:column;overflow:hidden;}
@@ -209,6 +223,7 @@
     <div class="drawer-label">A–Z Filter</div>
     <div class="drawer-alpha" id="mobileAlphaBar"></div>
   </div>
+  <button class="div-toggle" id="divToggleMobile" onclick="toggleDivOnly('mobile')" style="width:100%;text-align:center">💰 DIV ONLY</button>
   <button class="btn btn-gold" onclick="clearFilter();toggleDrawer()" style="width:100%;text-align:center">CLEAR ALL &amp; CLOSE</button>
 </div>
 
@@ -231,6 +246,7 @@
       <span class="field-label">Type</span>
       <div class="type-filters" id="desktopTypeFilters"></div>
     </div>
+    <button class="div-toggle" id="divToggleDesktop" onclick="toggleDivOnly('desktop')" title="Nur bestätigte Dividendenzahler anzeigen (aus gecachter Datenbank, kein API-Call)">💰 DIV ONLY</button>
     <div class="alpha-bar" id="desktopAlphaBar"></div>
   </div>
 
@@ -246,9 +262,9 @@
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th>Yield</th><th>Streak</th><th>Actions</th></tr></thead>
         <tbody id="tickerBody">
-          <tr><td colspan="4" style="text-align:center;padding:40px;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);">
+          <tr><td colspan="6" style="text-align:center;padding:40px;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);">
             <div style="font-size:24px;margin-bottom:12px;opacity:0.4">📡</div>SELECT AN EXCHANGE TO BEGIN
           </td></tr>
         </tbody>
@@ -517,6 +533,52 @@
 
   const TICKER_CACHE_URL = 'https://raw.githubusercontent.com/Babybounce500/genitus-ticker-cache/main/ticker-cache.csv';
 
+  // ── DIVIDEND CACHE (same database used by GENITUS Dividend-Terminal) ──
+  // 61k+ confirmed/historical dividend payers across all 83 exchanges, pre-scanned
+  // by background agents. Loaded once from the same genitus-ticker-cache repo as
+  // the base ticker list above -- zero extra API calls, just one more static CSV.
+  const DIV_SUMMARY_URL = 'https://raw.githubusercontent.com/Babybounce500/genitus-ticker-cache/main/dividend-summary.csv';
+  let dividendCacheMap = null;     // Map<fullSymbol, {yieldPct,streakYears,streakDirection,paymentCount,lastDate,lastAmount,lastCurrency}>
+  let dividendCacheLoading = null;
+  let divOnly = false;
+
+  function loadDividendCache(){
+    if(dividendCacheLoading) return dividendCacheLoading;
+    dividendCacheLoading = fetch(DIV_SUMMARY_URL)
+      .then(res => { if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); })
+      .then(text => {
+        const lines = text.split('\n').filter(Boolean);
+        const map = new Map();
+        for(let i=1;i<lines.length;i++){ // skip header row
+          const [fullSymbol,,,,count,streakYears,streakDir,cachedYield,,lastDate,lastAmount,lastCurrency] = parseCSVLine(lines[i]);
+          if(!fullSymbol) continue;
+          const yieldPct = parseFloat(cachedYield)||0;
+          map.set(fullSymbol, {
+            yieldPct: yieldPct>50?0:yieldPct, // same sanity cap the dividend-terminal uses against stale/bad data
+            streakYears: parseInt(streakYears)||1, streakDirection: streakDir||'new',
+            paymentCount: parseInt(count)||0, lastDate: lastDate||'',
+            lastAmount: parseFloat(lastAmount)||0, lastCurrency: lastCurrency||'',
+          });
+        }
+        dividendCacheMap = map;
+        console.log(`Dividend cache: ${lines.length-1} payers (${map.size} unique symbols)`);
+        return map;
+      })
+      .catch(e => {
+        console.warn('Dividend cache unavailable:', e.message);
+        dividendCacheMap = new Map();
+        return dividendCacheMap;
+      });
+    return dividendCacheLoading;
+  }
+
+  async function toggleDivOnly(src){
+    divOnly = !divOnly;
+    ['divToggleDesktop','divToggleMobile'].forEach(id=>document.getElementById(id).classList.toggle('active',divOnly));
+    if(divOnly && !dividendCacheMap){ showToast('⏳ Loading dividend cache…'); await loadDividendCache(); }
+    filterTable();
+  }
+
   function loadTickerCache(){
     if(tickerCacheLoading) return tickerCacheLoading;
     tickerCacheLoading = fetch(TICKER_CACHE_URL)
@@ -581,24 +643,34 @@
       const mA=!activeAlpha||r.symbol.toUpperCase().startsWith(activeAlpha);
       const mQ=!q||r.symbol.toLowerCase().includes(q)||r.name.toLowerCase().includes(q);
       const mT=activeType==='ALL'||r.type===activeType;
-      return mA&&mQ&&mT;
+      const mD=!divOnly||(dividendCacheMap&&dividendCacheMap.has(fullSymbol(r.symbol)));
+      return mA&&mQ&&mT&&mD;
     });
     renderTable(rows);
   }
   function clearFilter(){
     document.getElementById('searchInput').value='';
     document.getElementById('searchInputMobile').value='';
-    activeAlpha=null;activeType='ALL';
+    activeAlpha=null;activeType='ALL';divOnly=false;
     document.querySelectorAll('.alpha-btn').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});
     document.querySelectorAll('.type-btn').forEach(b=>{
       const isActive=b.dataset.type==='ALL';
       b.classList.toggle('active',isActive);
       b.setAttribute('aria-pressed',isActive?'true':'false');
     });
+    ['divToggleDesktop','divToggleMobile'].forEach(id=>document.getElementById(id).classList.remove('active'));
     filterTable();
   }
 
   // ── RENDER ──
+  function divCellsFor(sym){
+    const d = dividendCacheMap ? dividendCacheMap.get(sym) : null;
+    if(!d) return { yield: '<span class="yield-none">—</span>', streak: '<span class="streak-cell">—</span>' };
+    const yieldHtml = d.yieldPct>0 ? `<span class="yield-val">${d.yieldPct.toFixed(2)}%</span>` : '<span class="yield-none">0.00%</span>';
+    const dirClass = {up:'streak-up',down:'streak-down',flat:'streak-flat'}[d.streakDirection] || 'streak-new';
+    const streakHtml = `<span class="streak-cell ${dirClass}">${d.streakYears}y · ${d.paymentCount}x</span>`;
+    return { yield: yieldHtml, streak: streakHtml };
+  }
   function renderTable(rows){
     document.getElementById('tickerCount').textContent=rows.length.toLocaleString();
     const tbody=document.getElementById('tickerBody');
@@ -606,10 +678,13 @@
     const tc=t=>t==='COMMON STOCK'?'var(--green)':t==='ETF'?'var(--gold)':t==='FUND'?'#a78bfa':t==='INDEX'?'var(--red)':'var(--muted)';
     tbody.innerHTML=rows.map(r=>{
       const sym=fullSymbol(r.symbol),inWL=watchlist.includes(sym),c=tc(r.type);
+      const dc=divCellsFor(sym);
       return `<tr>
         <td><span class="ticker-symbol">${sym}</span></td>
         <td><span class="ticker-name" title="${r.name}">${r.name||'—'}</span></td>
         <td><span class="ticker-type" style="border-color:${c};color:${c}">${r.type}</span></td>
+        <td class="yield-cell">${dc.yield}</td>
+        <td>${dc.streak}</td>
         <td><div class="actions-cell">
           <button class="icon-btn" title="Copy" aria-label="Copy" onclick="copyTicker('${sym}')">⎘</button>
           <button class="icon-btn" title="Chart" aria-label="Open chart" onclick="openChart('${sym}')" style="color:var(--gold)">📈</button>
@@ -649,7 +724,15 @@
   function removeFromWL(sym){watchlist=watchlist.filter(s=>s!==sym);localStorage.setItem('wl_v3',JSON.stringify(watchlist));renderWatchlist();filterTable();}
   function clearWatchlist(){if(!watchlist.length)return;watchlist=[];localStorage.setItem('wl_v3',JSON.stringify(watchlist));renderWatchlist();filterTable();showToast('Watchlist cleared');}
   function copyAllWatchlist(){if(!watchlist.length)return showToast('Watchlist is empty');copyTicker(watchlist.join(',\n'));showToast(`⎘ Copied ${watchlist.length} symbols`);}
-  function exportWatchlistCSV(){if(!watchlist.length)return showToast('Watchlist is empty');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['Symbol\n'+watchlist.join('\n')],{type:'text/csv'}));a.download='watchlist.csv';a.click();showToast('CSV downloaded');}
+  function exportWatchlistCSV(){
+    if(!watchlist.length)return showToast('Watchlist is empty');
+    const rows = watchlist.map(sym => {
+      const d = dividendCacheMap ? dividendCacheMap.get(sym) : null;
+      return [sym, d?d.yieldPct.toFixed(2):'', d?d.streakYears:'', d?d.paymentCount:''];
+    });
+    downloadCSV('watchlist.csv', ['Symbol','YieldPct','StreakYears','PaymentCount'], rows);
+    showToast('CSV downloaded');
+  }
 
   // ── EXPORT: CSV HELPERS ──
   function csvEscape(v){
@@ -667,8 +750,12 @@
   // ── EXPORT: CURRENT EXCHANGE ──
   function exportCurrentExchangeCSV(){
     if(!currentEx || !allTickers.length) return showToast('No exchange loaded', true);
-    const rows = allTickers.map(r => [suffixFor(r.symbol, currentEx), r.name, r.type, currentEx]);
-    downloadCSV(`tickers_${currentEx}.csv`, ['Symbol','Name','Type','Exchange'], rows);
+    const rows = allTickers.map(r => {
+      const sym = suffixFor(r.symbol, currentEx);
+      const d = dividendCacheMap ? dividendCacheMap.get(sym) : null;
+      return [sym, r.name, r.type, currentEx, d?d.yieldPct.toFixed(2):'', d?d.streakYears:'', d?d.paymentCount:'', d?d.lastDate:''];
+    });
+    downloadCSV(`tickers_${currentEx}.csv`, ['Symbol','Name','Type','Exchange','YieldPct','StreakYears','PaymentCount','LastDividendDate'], rows);
     showToast(`✓ Exported ${rows.length.toLocaleString()} symbols (${currentEx})`);
   }
 
@@ -814,6 +901,7 @@
   // ── INIT ──
   buildExchangeSelects();buildTypeFilters();buildAlphaBars();renderWatchlist();
   loadTickerCache(); // kick off in background, ahead of the first exchange pick
+  loadDividendCache().then(()=>filterTable()); // re-render once yield/streak data lands, in case the table painted first
   document.getElementById('exchangeSelect').value='XETRA';
   document.getElementById('exchangeSelectMobile').value='XETRA';
   loadExchange('XETRA');
