@@ -100,6 +100,8 @@
     td{padding:9px 12px;font-size:13px;vertical-align:middle;}
     .ticker-symbol{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:1px;}
     .ticker-name{color:var(--text);font-size:13px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .ticker-symbol,.ticker-name{cursor:pointer;}
+    .ticker-symbol:hover,.ticker-name:hover{text-decoration:underline;}
     .ticker-type{font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:2px;border:1px solid var(--border);color:var(--muted);white-space:nowrap;}
     .actions-cell{display:flex;gap:5px;align-items:center;}
     .icon-btn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;border-radius:2px;transition:all 0.15s;font-size:13px;}
@@ -165,7 +167,7 @@
     .chart-close{font-family:var(--mono);font-size:18px;background:none;border:none;color:var(--muted);cursor:pointer;padding:0 4px;transition:color 0.15s;line-height:1;}
     .chart-close:hover{color:var(--red);}
     .chart-body{padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;}
-    .chart-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+    .chart-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
     @media(max-width:600px){.chart-stats{grid-template-columns:repeat(2,1fr);}}
     .stat-box{background:var(--surface);border:1px solid var(--border);padding:6px 8px;border-radius:2px;display:flex;align-items:center;justify-content:space-between;gap:6px;overflow:hidden;}
     .stat-label{font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;white-space:nowrap;}
@@ -262,7 +264,7 @@
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th>Yield</th><th>Streak</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th title="Trailing-12-Monats-Dividenden ÷ letzter gecachter Kurs (Daten-Stand siehe Tooltip pro Zelle) -- keine Live-Berechnung. Im Chart (📈) wird zusätzlich eine Live-Yield-Schätzung mit aktuellem Kurs gezeigt." style="cursor:help">Yield ⓘ</th><th>Streak</th><th>Actions</th></tr></thead>
         <tbody id="tickerBody">
           <tr><td colspan="6" style="text-align:center;padding:40px;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);">
             <div style="font-size:24px;margin-bottom:12px;opacity:0.4">📡</div>SELECT AN EXCHANGE TO BEGIN
@@ -316,6 +318,7 @@
         <div class="stat-box"><div class="stat-label">PERIOD HIGH</div><div class="stat-value" id="cs-high">—</div></div>
         <div class="stat-box"><div class="stat-label">PERIOD LOW</div> <div class="stat-value" id="cs-low">—</div></div>
         <div class="stat-box"><div class="stat-label">VS. MIDPOINT</div> <div class="stat-value" id="cs-trend">—</div></div>
+        <div class="stat-box" title="Trailing-12-Monats-Dividendensumme ÷ aktueller Live-Kurs -- korrigiert den veralteten Kurs aus dem Dividenden-Cache, ersetzt ihn aber nicht durch eine neu geprüfte Zahlungshistorie."><div class="stat-label">LIVE YIELD</div> <div class="stat-value" id="cs-yield">—</div></div>
       </div>
       <div id="chartAreaWrap">
         <div class="chart-loading" id="chartLoading"><div class="spinner"></div> LOADING...</div>
@@ -538,7 +541,8 @@
   // by background agents. Loaded once from the same genitus-ticker-cache repo as
   // the base ticker list above -- zero extra API calls, just one more static CSV.
   const DIV_SUMMARY_URL = 'https://raw.githubusercontent.com/Babybounce500/genitus-ticker-cache/main/dividend-summary.csv';
-  let dividendCacheMap = null;     // Map<fullSymbol, {yieldPct,streakYears,streakDirection,paymentCount,lastDate,lastAmount,lastCurrency}>
+  const DIV_CACHE_ASOF = '2026-10-07'; // date of the last batch re-scan -- update whenever dividend-summary.csv is regenerated
+  let dividendCacheMap = null;     // Map<fullSymbol, {yieldPct,yieldUnreliable,cachedPrice,streakYears,streakDirection,paymentCount,lastDate,lastAmount,lastCurrency}>
   let dividendCacheLoading = null;
   let divOnly = false;
 
@@ -550,11 +554,16 @@
         const lines = text.split('\n').filter(Boolean);
         const map = new Map();
         for(let i=1;i<lines.length;i++){ // skip header row
-          const [fullSymbol,,,,count,streakYears,streakDir,cachedYield,,lastDate,lastAmount,lastCurrency] = parseCSVLine(lines[i]);
+          const [fullSymbol,,,,count,streakYears,streakDir,cachedYield,cachedPrice,lastDate,lastAmount,lastCurrency] = parseCSVLine(lines[i]);
           if(!fullSymbol) continue;
           const yieldPct = parseFloat(cachedYield)||0;
+          // >50% is almost always a stale-price or FX-mismatch artifact (trailing dividend
+          // sum / a cached closing price that's now days-to-weeks old), not a real yield --
+          // flagged as unreliable rather than silently shown as 0.00%, which would wrongly
+          // imply "doesn't pay a dividend" when payment history clearly exists.
           map.set(fullSymbol, {
-            yieldPct: yieldPct>50?0:yieldPct, // same sanity cap the dividend-terminal uses against stale/bad data
+            yieldPct: yieldPct>50?0:yieldPct, yieldUnreliable: yieldPct>50,
+            cachedPrice: cachedPrice?parseFloat(cachedPrice):null,
             streakYears: parseInt(streakYears)||1, streakDirection: streakDir||'new',
             paymentCount: parseInt(count)||0, lastDate: lastDate||'',
             lastAmount: parseFloat(lastAmount)||0, lastCurrency: lastCurrency||'',
@@ -666,7 +675,10 @@
   function divCellsFor(sym){
     const d = dividendCacheMap ? dividendCacheMap.get(sym) : null;
     if(!d) return { yield: '<span class="yield-none">—</span>', streak: '<span class="streak-cell">—</span>' };
-    const yieldHtml = d.yieldPct>0 ? `<span class="yield-val">${d.yieldPct.toFixed(2)}%</span>` : '<span class="yield-none">0.00%</span>';
+    const yieldTip = 'Trailing-12-Monats-Dividendensumme ÷ Kurs vom '+DIV_CACHE_ASOF+' (nicht live). Im Chart (📈) wird eine live-korrigierte Schätzung gezeigt.';
+    const yieldHtml = d.yieldUnreliable
+      ? `<span class="yield-none" title="Berechneter Wert lag über 50% -- fast immer ein Artefakt eines veralteten Kurses oder einer Währungs-Inkonsistenz bei der Quelle, keine echte Renditeangabe." style="cursor:help">⚠ unzuverlässig</span>`
+      : d.yieldPct>0 ? `<span class="yield-val" title="${yieldTip}">${d.yieldPct.toFixed(2)}%</span>` : `<span class="yield-none" title="${yieldTip}">0.00%</span>`;
     const dirClass = {up:'streak-up',down:'streak-down',flat:'streak-flat'}[d.streakDirection] || 'streak-new';
     const streakHtml = `<span class="streak-cell ${dirClass}">${d.streakYears}y · ${d.paymentCount}x</span>`;
     return { yield: yieldHtml, streak: streakHtml };
@@ -680,8 +692,8 @@
       const sym=fullSymbol(r.symbol),inWL=watchlist.includes(sym),c=tc(r.type);
       const dc=divCellsFor(sym);
       return `<tr>
-        <td><span class="ticker-symbol">${sym}</span></td>
-        <td><span class="ticker-name" title="${r.name}">${r.name||'—'}</span></td>
+        <td><span class="ticker-symbol" onclick="openChart('${sym}')" title="Chart öffnen">${sym}</span></td>
+        <td><span class="ticker-name" onclick="openChart('${sym}')" title="${(r.name||'').replace(/"/g,'&quot;')} — Chart öffnen">${r.name||'—'}</span></td>
         <td><span class="ticker-type" style="border-color:${c};color:${c}">${r.type}</span></td>
         <td class="yield-cell">${dc.yield}</td>
         <td>${dc.streak}</td>
@@ -834,7 +846,7 @@
     canvas.style.display='none';loading.style.display='flex';
     loading.innerHTML='<div class="spinner"></div> LOADING...';
     setProgress('ind');
-    ['cs-price','cs-change','cs-high','cs-low','cs-trend'].forEach(id=>{document.getElementById(id).textContent='...';document.getElementById(id).className='stat-value';});
+    ['cs-price','cs-change','cs-high','cs-low','cs-trend','cs-yield'].forEach(id=>{document.getElementById(id).textContent='...';document.getElementById(id).className='stat-value';});
 
     try{
       setProgress(20);
@@ -867,6 +879,15 @@
       const te=document.getElementById('cs-trend');
       te.textContent=trendState;
       te.className='stat-value '+(trendState==='BULLISH'?'up':trendState==='BEARISH'?'down':'');
+      // Live-Yield: rescale the cached trailing-12mo yield by cachedPrice/livePrice instead
+      // of trusting the cached price directly -- cheap correction for the #1 accuracy risk
+      // in the dividend cache (prices move daily, the batch-scanned price doesn't). Does NOT
+      // re-check whether the trailing dividend payments themselves are still current.
+      const ye=document.getElementById('cs-yield');
+      const dd=dividendCacheMap?dividendCacheMap.get(chartSym):null;
+      if(!dd||!dd.cachedPrice||dd.yieldPct<=0){ ye.textContent='—'; }
+      else if(dd.yieldUnreliable){ ye.textContent='⚠ n/a'; }
+      else { const liveYield=dd.yieldPct*(dd.cachedPrice/last); ye.textContent=liveYield.toFixed(2)+'%'; ye.className='stat-value '+(liveYield>dd.yieldPct?'up':liveYield<dd.yieldPct?'down':''); }
       loading.style.display='none';canvas.style.display='block';
       if(chartInstance)chartInstance.destroy();
       const ctx=canvas.getContext('2d'),g=ctx.createLinearGradient(0,0,0,240);
