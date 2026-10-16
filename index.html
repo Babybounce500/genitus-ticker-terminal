@@ -264,7 +264,7 @@
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th title="Trailing-12-Monats-Dividenden ÷ letzter gecachter Kurs (Daten-Stand siehe Tooltip pro Zelle) -- keine Live-Berechnung. Im Chart (📈) wird zusätzlich eine Live-Yield-Schätzung mit aktuellem Kurs gezeigt." style="cursor:help">Yield ⓘ</th><th>Streak</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th title="Trailing-12-Monats-Dividenden ÷ letzter gecachter Kurs (Daten-Stand siehe Tooltip pro Zelle) -- keine Live-Berechnung. Im Chart (📈) wird zusätzlich eine Live-Yield-Schätzung mit aktuellem Kurs gezeigt." style="cursor:help">Yield ⓘ</th><th title="Jahre ohne Kürzung der Jahressumme (bis Ende 2025, laufendes Jahr nicht enthalten) · Gesamtzahl aller Einzelzahlungen. Der Pfeil zeigt nur die Veränderung im letzten vollständigen Jahr, nicht den ganzen Zeitraum -- Details im Tooltip pro Zeile." style="cursor:help">Streak ⓘ</th><th>Actions</th></tr></thead>
         <tbody id="tickerBody">
           <tr><td colspan="6" style="text-align:center;padding:40px;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);">
             <div style="font-size:24px;margin-bottom:12px;opacity:0.4">📡</div>SELECT AN EXCHANGE TO BEGIN
@@ -416,6 +416,36 @@
     {g:'💱 Forex & Other',opts:[{v:'FOREX',l:'Forex'},{v:'INDX',l:'Indices'},{v:'GBOND',l:'Govt Bonds'},{v:'EUFUND',l:'Europe Funds'}]},
   ];
 
+  // ── CURRENCY PER EXCHANGE ──
+  // Price display was hardcoded to "$" everywhere, which is simply wrong for the
+  // ~70 non-US exchanges here (XETRA quotes in EUR, LSE in GBP, HK in HKD, ...).
+  // Keyed by the exchange suffix exactly as it appears in a full symbol (e.g. "ADV.XETRA").
+  const EX_CURRENCY = {
+    US:'$',NYSE:'$',NASDAQ:'$',AMEX:'$',PINK:'$',OTCQB:'$',OTCQX:'$',BATS:'$',
+    TO:'C$',V:'C$',NEO:'C$',
+    MX:'MX$',SA:'R$',BA:'AR$',SN:'CLP$',LIM:'S/',
+    LSE:'£',IL:'£',
+    XETRA:'€',F:'€',STU:'€',DU:'€',BE:'€',MU:'€',HM:'€',HA:'€',LU:'€',IR:'€',PA:'€',AS:'€',BR:'€',LS:'€',MC:'€',VI:'€',AT:'€',HE:'€',ZSE:'€',
+    SW:'CHF ',
+    ST:'kr',OL:'kr',CO:'kr',
+    WAR:'zł',PR:'Kč',BUD:'Ft',RO:'lei',
+    MCX:'₽',IS:'₺',TA:'₪',
+    JSE:'R',EGX:'E£',BC:'DH',XNAI:'KSh',XZIM:'$',XBOT:'P',LUSE:'ZK',GSE:'GH₵',USE:'USh',RSE:'RF',DSE:'TSh',SEM:'₨',MSE:'MK',XNSA:'₦',
+    HK:'HK$',SHG:'¥',SHE:'¥',
+    KO:'₩',KQ:'₩',
+    NSE:'₹',KAR:'₨',CM:'₨',
+    KLSE:'RM',BK:'฿',JK:'Rp',VN:'₫',PSE:'₱',
+    TW:'NT$',TWO:'NT$',
+    AU:'A$',
+    CC:'$', EUFUND:'€',
+    // FOREX/INDX/GBOND have no single fixed currency (pair rates / index points / issuer-dependent) -- no symbol, not "$"
+    FOREX:'',INDX:'',GBOND:'',
+  };
+  function currencyForSymbol(sym){
+    const sfx = (sym||'').includes('.') ? sym.split('.').pop().toUpperCase() : '';
+    return sfx in EX_CURRENCY ? EX_CURRENCY[sfx] : ''; // unmapped code -> no symbol rather than a confidently wrong one
+  }
+
   function buildExchangeSelects() {
     const html = '<option value="">— Select Market —</option>' +
       EXCHANGES.map(g=>`<optgroup label="${g.g}">${g.opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('')}</optgroup>`).join('');
@@ -542,6 +572,7 @@
   // the base ticker list above -- zero extra API calls, just one more static CSV.
   const DIV_SUMMARY_URL = 'https://raw.githubusercontent.com/Babybounce500/genitus-ticker-cache/main/dividend-summary.csv';
   const DIV_CACHE_ASOF = '2026-10-07'; // date of the last batch re-scan -- update whenever dividend-summary.csv is regenerated
+  const DIV_STREAK_ASOF_YEAR = 2025; // last complete calendar year counted in StreakYears (scan excludes the year it ran in, even partially) -- bump alongside DIV_CACHE_ASOF
   let dividendCacheMap = null;     // Map<fullSymbol, {yieldPct,yieldUnreliable,cachedPrice,streakYears,streakDirection,paymentCount,lastDate,lastAmount,lastCurrency}>
   let dividendCacheLoading = null;
   let divOnly = false;
@@ -680,7 +711,11 @@
       ? `<span class="yield-none" title="Berechneter Wert lag über 50% -- fast immer ein Artefakt eines veralteten Kurses oder einer Währungs-Inkonsistenz bei der Quelle, keine echte Renditeangabe." style="cursor:help">⚠ unzuverlässig</span>`
       : d.yieldPct>0 ? `<span class="yield-val" title="${yieldTip}">${d.yieldPct.toFixed(2)}%</span>` : `<span class="yield-none" title="${yieldTip}">0.00%</span>`;
     const dirClass = {up:'streak-up',down:'streak-down',flat:'streak-flat'}[d.streakDirection] || 'streak-new';
-    const streakHtml = `<span class="streak-cell ${dirClass}">${d.streakYears}y · ${d.paymentCount}x</span>`;
+    const dirWord = {up:'gestiegen',down:'gefallen',flat:'unverändert'}[d.streakDirection] || null;
+    const streakTip = dirWord
+      ? `${d.streakYears} Jahre in Folge ohne Kürzung der Jahressumme, bis Ende ${DIV_STREAK_ASOF_YEAR} (laufendes Jahr nicht enthalten). Der Pfeil zeigt NUR die Veränderung im letzten vollständigen Jahr (${DIV_STREAK_ASOF_YEAR} vs. ${DIV_STREAK_ASOF_YEAR-1}): ${dirWord} -- nicht automatisch ${d.streakYears} Jahre Wachstum in Folge, auch "unverändert"-Jahre zählen zur Streak. ${d.paymentCount}x = Gesamtzahl aller je erfassten Einzelzahlungen.`
+      : `Weniger als 2 vollständige Kalenderjahre mit Zahlungen (bis Ende ${DIV_STREAK_ASOF_YEAR}) -- zu wenig Historie für eine Trend-Aussage. ${d.paymentCount}x = Gesamtzahl aller je erfassten Einzelzahlungen.`;
+    const streakHtml = `<span class="streak-cell ${dirClass}" title="${streakTip}" style="cursor:help">${d.streakYears}y · ${d.paymentCount}x</span>`;
     return { yield: yieldHtml, streak: streakHtml };
   }
   function renderTable(rows){
@@ -868,7 +903,8 @@
       const rtN=(rtv!==undefined&&rtv!==null&&rtv!=='NA')?parseFloat(rtv):NaN;
       const last=(!isNaN(rtN)&&rtN>0)?rtN:prices[prices.length-1];
       const chg=last-first,chgPct=first>0?((chg/first)*100).toFixed(2):'0.00',isUp=chg>=0;
-      const fmt=n=>{const v=parseFloat(n);return isNaN(v)?'—':(v<0.01?'$'+v.toFixed(6):'$'+v.toFixed(2));};
+      const curSym=currencyForSymbol(chartSym);
+      const fmt=n=>{const v=parseFloat(n);return isNaN(v)?'—':(v<0.01?curSym+v.toFixed(6):curSym+v.toFixed(2));};
       document.getElementById('cs-price').textContent=fmt(last);
       const ce=document.getElementById('cs-change');ce.textContent=(isUp?'+':'')+chgPct+'%';ce.className='stat-value '+(isUp?'up':'down');
       document.getElementById('cs-high').textContent=fmt(high);
@@ -899,10 +935,10 @@
           {label:'Period midpoint',data:labels.map(()=>mid),borderColor:midColor,borderWidth:1.3,borderDash:[6,4],backgroundColor:'transparent',fill:false,pointRadius:0,tension:0}
         ]},
         options:{responsive:true,maintainAspectRatio:false,animation:{duration:500},
-          plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,backgroundColor:'#111820',borderColor:'#1e2d3d',borderWidth:1,titleColor:'#00d4ff',bodyColor:'#c8d8e8',titleFont:{family:'Space Mono',size:11},bodyFont:{family:'Space Mono',size:11},callbacks:{label:c=>{const v=parseFloat(c.parsed.y);const s=isNaN(v)?'—':(v<0.01?'$'+v.toFixed(6):'$'+v.toFixed(2));return ' '+c.dataset.label+': '+s;},}}},
+          plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,backgroundColor:'#111820',borderColor:'#1e2d3d',borderWidth:1,titleColor:'#00d4ff',bodyColor:'#c8d8e8',titleFont:{family:'Space Mono',size:11},bodyFont:{family:'Space Mono',size:11},callbacks:{label:c=>{const v=parseFloat(c.parsed.y);const s=isNaN(v)?'—':(v<0.01?curSym+v.toFixed(6):curSym+v.toFixed(2));return ' '+c.dataset.label+': '+s;},}}},
           scales:{
             x:{ticks:{color:'#3a5068',font:{family:'Space Mono',size:9},maxTicksLimit:8,maxRotation:0},grid:{color:'rgba(30,45,61,0.6)'}},
-            y:{ticks:{color:'#3a5068',font:{family:'Space Mono',size:9},callback:v=>{const n=parseFloat(v);return isNaN(n)?'':(n<0.01?'$'+n.toFixed(4):'$'+n.toFixed(0));}},grid:{color:'rgba(30,45,61,0.6)'}}
+            y:{ticks:{color:'#3a5068',font:{family:'Space Mono',size:9},callback:v=>{const n=parseFloat(v);return isNaN(n)?'':(n<0.01?curSym+n.toFixed(4):curSym+n.toFixed(0));}},grid:{color:'rgba(30,45,61,0.6)'}}
           }}
       });
       setProgress(100);setTimeout(()=>setProgress(0),700);
