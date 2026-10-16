@@ -264,7 +264,7 @@
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th title="Trailing-12-Monats-Dividenden ÷ letzter gecachter Kurs (Daten-Stand siehe Tooltip pro Zelle) -- keine Live-Berechnung. Im Chart (📈) wird zusätzlich eine Live-Yield-Schätzung mit aktuellem Kurs gezeigt." style="cursor:help">Yield ⓘ</th><th title="Jahre ohne Kürzung der Jahressumme (bis Ende 2025, laufendes Jahr nicht enthalten) · Gesamtzahl aller Einzelzahlungen. Der Pfeil zeigt nur die Veränderung im letzten vollständigen Jahr, nicht den ganzen Zeitraum -- Details im Tooltip pro Zeile." style="cursor:help">Streak ⓘ</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Name</th><th>Type</th><th title="Trailing-12-Monats-Dividenden ÷ letzter gecachter Kurs (Daten-Stand siehe Tooltip pro Zelle) -- keine Live-Berechnung. Im Chart (📈) wird zusätzlich eine Live-Yield-Schätzung mit aktuellem Kurs gezeigt." style="cursor:help">Yield ⓘ</th><th title="Jahre ohne Kürzung der Jahressumme (bis Ende 2025, laufendes Jahr nicht enthalten) · Gesamtzahl aller Einzelzahlungen. ▼ bedeutet: letztes Jahr gekürzt -- Serie startet neu bei 1y, egal wie lang vorher gezahlt wurde. Details im Tooltip pro Zeile." style="cursor:help">Streak ⓘ</th><th>Actions</th></tr></thead>
         <tbody id="tickerBody">
           <tr><td colspan="6" style="text-align:center;padding:40px;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);">
             <div style="font-size:24px;margin-bottom:12px;opacity:0.4">📡</div>SELECT AN EXCHANGE TO BEGIN
@@ -711,10 +711,12 @@
       ? `<span class="yield-none" title="Berechneter Wert lag über 50% -- fast immer ein Artefakt eines veralteten Kurses oder einer Währungs-Inkonsistenz bei der Quelle, keine echte Renditeangabe." style="cursor:help">⚠ unzuverlässig</span>`
       : d.yieldPct>0 ? `<span class="yield-val" title="${yieldTip}">${d.yieldPct.toFixed(2)}%</span>` : `<span class="yield-none" title="${yieldTip}">0.00%</span>`;
     const dirClass = {up:'streak-up',down:'streak-down',flat:'streak-flat'}[d.streakDirection] || 'streak-new';
-    const dirWord = {up:'gestiegen',down:'gefallen',flat:'unverändert'}[d.streakDirection] || null;
-    const streakTip = dirWord
-      ? `${d.streakYears} Jahre in Folge ohne Kürzung der Jahressumme, bis Ende ${DIV_STREAK_ASOF_YEAR} (laufendes Jahr nicht enthalten). Der Pfeil zeigt NUR die Veränderung im letzten vollständigen Jahr (${DIV_STREAK_ASOF_YEAR} vs. ${DIV_STREAK_ASOF_YEAR-1}): ${dirWord} -- nicht automatisch ${d.streakYears} Jahre Wachstum in Folge, auch "unverändert"-Jahre zählen zur Streak. ${d.paymentCount}x = Gesamtzahl aller je erfassten Einzelzahlungen.`
-      : `Weniger als 2 vollständige Kalenderjahre mit Zahlungen (bis Ende ${DIV_STREAK_ASOF_YEAR}) -- zu wenig Historie für eine Trend-Aussage. ${d.paymentCount}x = Gesamtzahl aller je erfassten Einzelzahlungen.`;
+    const countNote = ` ${d.paymentCount}x = Gesamtzahl aller je erfassten Einzelzahlungen (nicht auf die Streak-Jahre begrenzt).`;
+    const streakTip = d.streakDirection==='down'
+      ? `Die Jahressumme ist im letzten vollständigen Jahr (${DIV_STREAK_ASOF_YEAR} ggü. ${DIV_STREAK_ASOF_YEAR-1}) GESUNKEN -- das ist eine Kürzung, daher beginnt die "Jahre ohne Kürzung"-Serie direkt wieder bei 1, unabhängig davon wie lange zuvor bereits gezahlt wurde.${countNote}`
+      : d.streakDirection==='up' || d.streakDirection==='flat'
+      ? `${d.streakYears} Jahre in Folge ohne Kürzung der Jahressumme, bis Ende ${DIV_STREAK_ASOF_YEAR} (laufendes Jahr nicht enthalten). Der Pfeil zeigt NUR die Veränderung im letzten vollständigen Jahr (${DIV_STREAK_ASOF_YEAR} vs. ${DIV_STREAK_ASOF_YEAR-1}): ${d.streakDirection==='up'?'gestiegen':'unverändert'} -- nicht automatisch ${d.streakYears} Jahre Wachstum in Folge, auch "unverändert"-Jahre zählen zur Streak.${countNote}`
+      : `Weniger als 2 vollständige, lückenlos aufeinanderfolgende Kalenderjahre mit Zahlungen (bis Ende ${DIV_STREAK_ASOF_YEAR}) -- zu wenig/unterbrochene Historie für eine Trend-Aussage, auch wenn insgesamt schon viele Einzelzahlungen vorliegen.${countNote}`;
     const streakHtml = `<span class="streak-cell ${dirClass}" title="${streakTip}" style="cursor:help">${d.streakYears}y · ${d.paymentCount}x</span>`;
     return { yield: yieldHtml, streak: streakHtml };
   }
