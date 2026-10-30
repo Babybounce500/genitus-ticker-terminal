@@ -290,6 +290,9 @@
       <button class="btn btn-primary" onclick="copyAllWatchlist()">COPY ALL</button>
       <button class="btn" style="border-color:var(--red);color:var(--red)" onclick="clearWatchlist()">CLEAR</button>
     </div>
+    <div class="wl-footer" style="margin-top:6px;">
+      <a class="btn btn-primary" style="text-decoration:none;" href="https://babybounce500.github.io/goldshield-ai-analysis-archive/master-strategy-terminal.html" target="_blank" rel="noopener noreferrer">📊 Strategien auf diese Watchlist anwenden</a>
+    </div>
   </div>
 
 </div>
@@ -750,11 +753,16 @@
   }
 
   // ── WATCHLIST ──
+  // Shared across the whole babybounce500.github.io origin (same-origin, different repo paths) --
+  // any other GENITUS/GoldShield tool can read this key directly, no export/import needed.
+  function syncSharedTickers(){
+    try{ localStorage.setItem('genitus:tickers', JSON.stringify(watchlist)); }catch(e){}
+  }
   function toggleWatchlist(sym,btn){
     const idx=watchlist.indexOf(sym);
     if(idx===-1){watchlist.push(sym);btn.classList.add('active');showToast('♥ Added: '+sym);}
     else{watchlist.splice(idx,1);btn.classList.remove('active');showToast('✕ Removed: '+sym);}
-    localStorage.setItem('wl_v3',JSON.stringify(watchlist));renderWatchlist();
+    localStorage.setItem('wl_v3',JSON.stringify(watchlist));syncSharedTickers();renderWatchlist();
   }
   function renderWatchlist(){
     document.getElementById('wlCount').textContent=watchlist.length;
@@ -770,8 +778,8 @@
         </div>
       </div>`).join('');
   }
-  function removeFromWL(sym){watchlist=watchlist.filter(s=>s!==sym);localStorage.setItem('wl_v3',JSON.stringify(watchlist));renderWatchlist();filterTable();}
-  function clearWatchlist(){if(!watchlist.length)return;watchlist=[];localStorage.setItem('wl_v3',JSON.stringify(watchlist));renderWatchlist();filterTable();showToast('Watchlist cleared');}
+  function removeFromWL(sym){watchlist=watchlist.filter(s=>s!==sym);localStorage.setItem('wl_v3',JSON.stringify(watchlist));syncSharedTickers();renderWatchlist();filterTable();}
+  function clearWatchlist(){if(!watchlist.length)return;watchlist=[];localStorage.setItem('wl_v3',JSON.stringify(watchlist));syncSharedTickers();renderWatchlist();filterTable();showToast('Watchlist cleared');}
   function copyAllWatchlist(){if(!watchlist.length)return showToast('Watchlist is empty');copyTicker(watchlist.join(',\n'));showToast(`⎘ Copied ${watchlist.length} symbols`);}
   function exportWatchlistCSV(){
     if(!watchlist.length)return showToast('Watchlist is empty');
@@ -958,7 +966,7 @@
   }
 
   // ── INIT ──
-  buildExchangeSelects();buildTypeFilters();buildAlphaBars();renderWatchlist();
+  buildExchangeSelects();buildTypeFilters();buildAlphaBars();renderWatchlist();syncSharedTickers();
   loadTickerCache(); // kick off in background, ahead of the first exchange pick
   loadDividendCache().then(()=>filterTable()); // re-render once yield/streak data lands, in case the table painted first
   document.getElementById('exchangeSelect').value='XETRA';
